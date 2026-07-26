@@ -3,7 +3,8 @@ from sqlalchemy import select
 from user.schema import UserSignUpRequest, UserResponse, UserLogInRequest
 from database.connection import get_session
 from user.model import User
-from auth.password import hash_password
+from auth.password import hash_password, verify_password
+from auth.jwt import create_access_token, verify_access_token, verify_user
 
 
 router = APIRouter(
@@ -51,5 +52,44 @@ async def signup_user_handler(
 )
 async def login_user_handler(
     body: UserLogInRequest,
+    session = Depends(get_session),
 
 ):
+    stmt = select(User).where(User.email == body.email)
+    result = await session.execute(stmt)
+    user = result.scalar()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="이메일과 비밀번호가 일치하지 않습니다."
+        )
+    is_verified = verify_password(
+        password = body.password,
+        hashed_password=user.hashed_password
+    )
+    if not is_verified:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="이메일과 비밀번호가 일치하지 않습니다."
+        )
+
+    access_token = create_access_token(user_id=user.id)
+
+    return {"access_token": access_token}
+
+@router.get(
+    "/me",
+    summary="내 정보 조회 API",
+    status_code=status.HTTP_200_OK,
+    response_model=UserResponse,
+)
+async def get_me_handler(
+    session = Depends(get_session),
+    user_id = Depends(verify_user),
+):
+    stmt = select(User).where(User.id == user_id)
+    result = await session.execute(stmt)
+    user = result.scalar()
+
+    return user
+
